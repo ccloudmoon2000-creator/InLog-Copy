@@ -1095,12 +1095,36 @@ function failIfNotConnected() {
   call.timeout = setTimeout(() => { if (call && call.state !== "live") { toast("Não foi possível ligar o áudio. A rede pode precisar de um servidor TURN."); endCall(true); } }, 20000);
 }
 
+/* Reproduz o áudio remoto; se o browser bloquear o autoplay (comum no Chrome
+   Android quando o play() só corre depois de um "await"), mostra aviso com
+   botão para destravar com um toque, em vez de ficar em silêncio sem avisar. */
+function playRemoteAudio() {
+  const a = $("#remote-audio");
+  const p = a.play();
+  if (p && p.catch) p.catch(() => showUnmuteHint());
+}
+function showUnmuteHint() {
+  if ($("#unmute-hint")) return;
+  const b = html('<button class="btn btn-primary" id="unmute-hint" style="position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:60">🔊 Toca para ativar o som</button>');
+  b.onclick = () => { playRemoteAudio(); b.remove(); };
+  document.body.append(b);
+}
+/* "Destrava" o elemento de áudio dentro do próprio clique do utilizador
+   (gesto síncrono), para que um play() programático mais tarde (quando o
+   áudio remoto chegar via WebRTC) já seja permitido pelo browser. */
+function unlockRemoteAudio() {
+  const a = $("#remote-audio");
+  const p = a.play();
+  if (p && p.catch) p.catch(() => {});
+}
+
 function setupPC() {
   const pc = (call.pc = new RTCPeerConnection(ICE));
   call.stream.getTracks().forEach((t) => pc.addTrack(t, call.stream));
   pc.onicecandidate = (e) => e.candidate && sig({ type: "ice", candidate: e.candidate });
   pc.ontrack = (e) => {   // áudio recebido → altifalante
-    const a = $("#remote-audio"); a.srcObject = e.streams[0] || new MediaStream([e.track]); a.muted = false; a.volume = 1; a.play().catch(() => {});
+    const a = $("#remote-audio"); a.srcObject = e.streams[0] || new MediaStream([e.track]); a.muted = false; a.volume = 1;
+    playRemoteAudio();
   };
   pc.onconnectionstatechange = () => {
     if (!call) return;
@@ -1111,6 +1135,7 @@ function setupPC() {
 
 async function startCall(peer, myId) {
   if (call || incoming) return toast("Já estás numa chamada.");
+  unlockRemoteAudio();
   const stream = await getMic(); if (!stream) return;
   call = { me: myId, peer, stream, state: "calling", pending: [] };
   call.out = await openOut(peer.id); setupPC();
@@ -1120,6 +1145,7 @@ async function startCall(peer, myId) {
 }
 
 async function acceptCall() {
+  unlockRemoteAudio();
   const inc = incoming, stream = await getMic();
   if (!stream) return declineCall();
   incoming = null; $("#incoming").classList.add("hidden");
@@ -1141,6 +1167,7 @@ function endCall(notify) {
   call.stream.getTracks().forEach((t) => t.stop()); if (call.pc) call.pc.close();
   const out = call.out; setTimeout(() => sb.removeChannel(out), 1000);
   call = null; $("#remote-audio").srcObject = null; $("#call-ui").classList.add("hidden");
+  $("#unmute-hint")?.remove();
 }
 function showCallUI() {
   if (!call) return; $("#call-ui").classList.remove("hidden");
